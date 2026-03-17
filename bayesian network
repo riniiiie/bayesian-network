@@ -1,109 +1,145 @@
+# Install (run once if needed)
+# !pip install pgmpy ipywidgets
+
 import pandas as pd
-data = pd.read_csv("heart.csv")
-print(data.head())
-data = data[['age','sex','cp','trestbps','chol','thalch','num']]
-data['num'] = data['num'].apply(lambda x: 1 if x>0 else 0)
-data['sex'] = data['sex'].map({'Male':1,'Female':0})
-data['cp'] = data['cp'].map({
-'typical angina':0,
-'atypical angina':1,
-'non-anginal':2,
-'asymptomatic':3
-                              })
-data['age'] = pd.cut(data['age'], bins=3, labels=[0,1,2])
-data['chol'] = pd.cut(data['chol'], bins=3, labels=[0,1,2])
-data['trestbps'] = pd.cut(data['trestbps'], bins=3, labels=[0,1,2])
-data['thalch'] = pd.cut(data['thalch'], bins=3, labels=[0,1,2])
+import io
 from pgmpy.models import DiscreteBayesianNetwork
 from pgmpy.estimators import MaximumLikelihoodEstimator
-model = DiscreteBayesianNetwork([
-('age','chol'),
-('age','trestbps'),
-('chol','num'),
-('trestbps','num'),
-('cp','num'),
-('thalch','num'),
-('sex','num')
-])
-model.fit(data, estimator=MaximumLikelihoodEstimator)
-accuracy = accuracy_score(y_true, y_pred)
-("\nModel Evaluation Metrics:\n")
-print(f"Accuracy: {accuracy:.2f}")
-print("Model trained successfully")
 from pgmpy.inference import VariableElimination
-infer = VariableElimination(model)
-def predict_heart_disease_prob(age, sex, cp, chol, trestbps, thalch):
-processed_sex = 1 if sex == 'Male' else 0
-cp_mapping = {
-'typical angina': 0,
-'atypical angina': 1,
-'non-anginal': 2,
-'asymptomatic': 3
-}
-processed_cp = cp_mapping[cp]
-if age <= 45:
-processed_age = 0
-elif age <= 61:
-processed_age = 1
-else:
-processed_age = 2
-if chol <= 272:
-processed_chol = 0
-elif chol <= 418:
-processed_chol = 1
-else:
-processed_chol = 2
-if trestbps <= 129:
-processed_trestbps = 0
-elif trestbps <= 164:
-processed_trestbps = 1
-else:
-processed_trestbps = 2
-if thalch <= 114:
-processed_thalch = 0
-elif thalch <= 158:
-processed_thalch = 1
-else:
-processed_thalch = 2
-evidence = {
-'age': processed_age,
-'sex': processed_sex,
-'cp': processed_cp,
-'chol': processed_chol,
-'trestbps': processed_trestbps,
-'thalch': processed_thalch
-}
-result = infer.query(variables=['num'], evidence=evidence)
-prob_heart_disease = result.values[1]
-return prob_heart_disease
-chol={sample_chol}, trestbps={sample_trestbps}, thalch={sample_thalch}:")
 import ipywidgets as widgets
 from IPython.display import display
+
+# ---------------------------
+# STEP 1: Upload CSV File
+# ---------------------------
+upload = widgets.FileUpload(accept='.csv', multiple=False)
+display(widgets.Label("Upload heart.csv file:"), upload)
+
+data = None
+model = None
+infer = None
+
+def load_and_train(change):
+    global data, model, infer
+    
+    if not upload.value:
+        return
+    
+    uploaded_file = list(upload.value.values())[0]
+    content = uploaded_file['content']
+    
+    data = pd.read_csv(io.BytesIO(content))
+    
+    print("✅ File uploaded successfully!")
+    print(data.head())
+
+    # ---------------------------
+    # STEP 2: Preprocessing
+    # ---------------------------
+    data = data[['age','sex','cp','trestbps','chol','thalch','num']]
+
+    data['num'] = data['num'].apply(lambda x: 1 if x > 0 else 0)
+
+    # Handle sex safely
+    if data['sex'].dtype == 'object':
+        data['sex'] = data['sex'].map({'Male':1,'Female':0})
+
+    # Chest pain mapping
+    if data['cp'].dtype == 'object':
+        data['cp'] = data['cp'].map({
+            'typical angina':0,
+            'atypical angina':1,
+            'non-anginal':2,
+            'asymptomatic':3
+        })
+
+    # Discretization
+    data['age'] = pd.cut(data['age'], bins=3, labels=[0,1,2])
+    data['chol'] = pd.cut(data['chol'], bins=3, labels=[0,1,2])
+    data['trestbps'] = pd.cut(data['trestbps'], bins=3, labels=[0,1,2])
+    data['thalch'] = pd.cut(data['thalch'], bins=3, labels=[0,1,2])
+
+    # ---------------------------
+    # STEP 3: Bayesian Network
+    # ---------------------------
+    model = DiscreteBayesianNetwork([
+        ('age','chol'),
+        ('age','trestbps'),
+        ('chol','num'),
+        ('trestbps','num'),
+        ('cp','num'),
+        ('thalch','num'),
+        ('sex','num')
+    ])
+
+    model.fit(data, estimator=MaximumLikelihoodEstimator)
+    infer = VariableElimination(model)
+
+    print("✅ Bayesian Network trained successfully!")
+
+upload.observe(load_and_train, names='value')
+
+# ---------------------------
+# STEP 4: Prediction Function
+# ---------------------------
+def predict_heart_disease(age, sex, cp, chol, trestbps, thalch):
+    processed_sex = 1 if sex == 'Male' else 0
+
+    cp_map = {
+        'typical angina': 0,
+        'atypical angina': 1,
+        'non-anginal': 2,
+        'asymptomatic': 3
+    }
+
+    # Discretization logic (same as training)
+    processed_age = 0 if age <= 45 else (1 if age <= 61 else 2)
+    processed_chol = 0 if chol <= 272 else (1 if chol <= 418 else 2)
+    processed_trestbps = 0 if trestbps <= 129 else (1 if trestbps <= 164 else 2)
+    processed_thalch = 0 if thalch <= 114 else (1 if thalch <= 158 else 2)
+
+    evidence = {
+        'age': processed_age,
+        'sex': processed_sex,
+        'cp': cp_map[cp],
+        'chol': processed_chol,
+        'trestbps': processed_trestbps,
+        'thalch': processed_thalch
+    }
+
+    result = infer.query(variables=['num'], evidence=evidence)
+    return result.values[1]
+
+# ---------------------------
+# STEP 5: UI for Prediction
+# ---------------------------
 age = widgets.IntText(description="Age:")
-sex = widgets.Dropdown(
-options=['Male', 'Female'],
-description='Sex:'
-)
+sex = widgets.Dropdown(options=['Male','Female'], description="Sex:")
 cp = widgets.Dropdown(
-options=['typical angina','atypical angina','non-anginal','asymptomatic'],
-description='Chest Pain:'
+    options=['typical angina','atypical angina','non-anginal','asymptomatic'],
+    description="Chest Pain:"
 )
 chol = widgets.IntText(description="Chol:")
 trestbps = widgets.IntText(description="Rest BP:")
 thalch = widgets.IntText(description="Max HR:")
-button = widgets.Button(description="Predict")
+
+predict_btn = widgets.Button(description="Predict")
 output = widgets.Output()
-def on_button_click(b):
-with output:
-output.clear_output()
-result = predict_heart_disease_prob(
-age.value,
-sex.value,
-cp.value,
-chol.value,
-trestbps.value,
-thalch.value
-)
-print(f"Predicted Probability of Heart Disease: {result*100:.2f}%")
-button.on_click(on_button_click)
-display(age, sex, cp, chol, trestbps, thalch, button, output)
+
+def on_predict(b):
+    with output:
+        output.clear_output()
+        if infer is None:
+            print("⚠️ Please upload and train model first!")
+            return
+        
+        prob = predict_heart_disease(
+            age.value, sex.value, cp.value,
+            chol.value, trestbps.value, thalch.value
+        )
+
+        print(f"❤️ Probability of Heart Disease: {prob*100:.2f}%")
+
+predict_btn.on_click(on_predict)
+
+display(age, sex, cp, chol, trestbps, thalch, predict_btn, output)
